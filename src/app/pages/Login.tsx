@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Activity, AlertCircle } from 'lucide-react';
-import { useAuth } from '@/app/context/AuthContext';
+import { useAuth } from '../context/AuthContext';
 
 const FIREBASE_URL =
   "https://neurowatch-b3b08-default-rtdb.firebaseio.com/users.json";
@@ -17,24 +17,43 @@ export function Login() {
     e.preventDefault();
 
     try {
-      const res = await fetch(FIREBASE_URL);
-      const data = await res.json();
+      // Try Firebase first
+      try {
+        const res = await fetch(FIREBASE_URL);
+        const data = await res.json();
 
-      if (!data) {
-        setError("No users found");
-        return;
+        if (data) {
+          const users = Object.entries(data);
+
+          const matchedUser = users.find(([_, value]: any) => {
+            return (
+              (value.username === username || value.email === username) &&
+              value.password === password
+            );
+          });
+
+          if (matchedUser) {
+            // Save to localStorage for other components to use
+            const userData = { username, email: (matchedUser[1] as any).email };
+            localStorage.setItem('neurowatch_user', JSON.stringify(userData));
+            localStorage.setItem('user', JSON.stringify(userData));
+            navigate('/dashboard');
+            return;
+          }
+        }
+      } catch (firebaseError) {
+        console.log('Firebase not available, trying local auth');
       }
 
-      const users = Object.entries(data);
-
-      const matchedUser = users.find(([_, value]: any) => {
-        return (
-          (value.username === username || value.email === username) &&
-          value.password === password
-        );
-      });
-
-      if (matchedUser) {
+      // Try local authentication
+      const success = login(username, password);
+      
+      if (success) {
+        // Also save to legacy key for backward compatibility
+        const storedUser = localStorage.getItem('neurowatch_user');
+        if (storedUser) {
+          localStorage.setItem('user', storedUser);
+        }
         navigate('/dashboard');
       } else {
         setError('Invalid username or password');

@@ -1,7 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
-import { Upload, TrendingUp, Activity, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import { Upload, TrendingUp, Activity, AlertCircle, CheckCircle, Loader2, Camera, CameraOff } from 'lucide-react';
 import * as poseDetection from '@tensorflow-models/pose-detection';
+import * as tf from '@tensorflow/tfjs';
 import '@tensorflow/tfjs-backend-webgl';
+
+// Set the backend before loading the model
+tf.setBackend('webgl');
 
 // Firebase URL
 const FIREBASE_URL = "https://neurowatch-b3b08-default-rtdb.firebaseio.com/watch_data";
@@ -24,24 +28,39 @@ export function Gait() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [modelLoaded, setModelLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [useCamera, setUseCamera] = useState(false);
+  const [cameraActive, setCameraActive] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const detectorRef = useRef<poseDetection.PoseDetector | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  // Sync video element with camera stream when camera becomes active
+  useEffect(() => {
+    if (useCamera && cameraActive && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+    }
+  }, [useCamera, cameraActive]);
 
   // Initialize the pose detection model
   useEffect(() => {
     const loadModel = async () => {
       try {
+        // Wait for the backend to be ready
+        await tf.ready();
+        console.log('TensorFlow.js backend ready:', tf.getBackend());
+        
         const detector = await poseDetection.createDetector(
           poseDetection.SupportedModels.MoveNet,
           { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
         );
         detectorRef.current = detector;
         setModelLoaded(true);
+        console.log('Pose detection model loaded successfully');
       } catch (err) {
         console.error('Failed to load pose detection model:', err);
-        setError('Failed to load AI model. Please refresh and try again.');
+        setError('Failed to load AI model. Please refresh and try again. Make sure your browser supports WebGL.');
       }
     };
     loadModel();
@@ -49,6 +68,10 @@ export function Gait() {
     return () => {
       if (detectorRef.current) {
         detectorRef.current.dispose();
+      }
+      // Clean up camera stream
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
       }
     };
   }, []);
@@ -60,12 +83,74 @@ export function Gait() {
       setVideoURL(URL.createObjectURL(file));
       setResult(null);
       setError(null);
+      setUseCamera(false);
     }
+  };
+
+  // Start camera for live video capture
+  const startCamera = async () => {
+    try {
+      // Check if getUserMedia is supported
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setError('Camera is not supported in this browser. Please use a modern browser like Chrome, Firefox, or Safari.');
+        return;
+      }
+      
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          facingMode: 'user' 
+        } 
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setCameraActive(true);
+      setUseCamera(true);
+      setVideoURL('camera');
+      setResult(null);
+      setError(null);
+    } catch (err: any) {
+      console.error('Failed to access camera:', err);
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setError('Camera permission denied. Please allow camera access in your browser settings and refresh the page.');
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        setError('No camera found. Please connect a camera and try again.');
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        setError('Camera is in use by another application. Please close other apps using the camera and try again.');
+      } else {
+        setError('Failed to access camera. Please ensure camera permissions are granted and try again.');
+      }
+    }
+  };
+
+  // Stop camera
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraActive(false);
+    setUseCamera(false);
+    setVideoURL(null);
   };
 
   // Analyze video using AI pose detection
   const analyzeVideo = async () => {
-    if (!videoURL || !videoRef.current || !detectorRef.current) return;
+    if (!videoRef.current || !detectorRef.current) {
+      setError('AI model is not ready. Please wait for the model to load.');
+      return;
+    }
+    if (!videoURL) {
+      setError('Please upload a video or start the camera first.');
+      return;
+    }
 
     setAnalyzing(true);
     setError(null);
@@ -73,14 +158,59 @@ export function Gait() {
     try {
       const video = videoRef.current;
       
-      // Wait for video to load
-      await new Promise<void>((resolve, reject) => {
-        video.onloadedmetadata = () => resolve();
-        video.onerror = () => reject(new Error('Failed to load video'));
-      });
+      // For camera feed, ensure video is playing
+      if (useCamera && cameraActive) {
+        if (video.paused || video.ended) {
+          await video.play();
+        }
+      } else {
+        // For uploaded video, ensure it's fully loaded
+        console.log('Video readyState:', video.readyState);
+        
+        // Create a promise to wait for video to be ready
+        if (video.readyState < 2) {
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('Video load timeout')), 30000);
+            const onCanPlay = () => {
+              clearTimeout(timeout);
+              video.removeEventListener('canplay', onCanPlay);
+              video.removeEventListener('error', onError);
+              console.log('Video canplay event fired');
+              resolve();
+            };
+            const onError = (e: Event) => {
+              clearTimeout(timeout);
+              video.removeEventListener('canplay', onCanPlay);
+              video.removeEventListener('error', onError);
+              console.error('Video error:', e);
+              reject(new Error('Failed to load video'));
+            };
+            video.addEventListener('canplay', onCanPlay);
+            video.addEventListener('error', onError);
+            video.load(); // Trigger load
+          });
+        }
+        
+        // Start playing if not already
+        if (video.paused || video.ended) {
+          console.log('Starting video playback...');
+          await video.play();
+        }
+      }
 
-      await video.play();
+      // Small delay to let video start playing
+      await new Promise(resolve => setTimeout(resolve, 500));
 
+      console.log('Video playing:', !video.paused, 'Video dimensions:', video.videoWidth, 'x', video.videoHeight);
+      
+      if (video.videoWidth === 0 || video.videoHeight === 0) {
+        setError('Video has no valid dimensions. Please try a different video.');
+        setAnalyzing(false);
+        return;
+      }
+
+      console.log('Starting pose detection...');
+      
       // Capture frames and analyze
       const poses: poseDetection.Pose[] = [];
       const frameCount = 30; // Analyze 30 frames
@@ -88,15 +218,18 @@ export function Gait() {
 
       for (let i = 0; i < frameCount; i++) {
         try {
-          const pose = await detectorRef.current.estimatePoses(video);
-          if (pose && pose.length > 0) {
-            poses.push(pose[0]);
+          const detectedPoses = await detectorRef.current.estimatePoses(video);
+          console.log(`Frame ${i}: detected ${detectedPoses.length} poses`);
+          if (detectedPoses && detectedPoses.length > 0) {
+            poses.push(detectedPoses[0]);
           }
         } catch (e) {
           console.warn(`Frame ${i} analysis failed:`, e);
         }
         await new Promise(resolve => setTimeout(resolve, frameInterval));
       }
+
+      console.log(`Total poses detected: ${poses.length}`);
 
       // Analyze the collected poses
       const analysis = analyzeGait(poses);
@@ -107,7 +240,7 @@ export function Gait() {
       
     } catch (err) {
       console.error('Analysis error:', err);
-      setError('Failed to analyze video. Please try with a clearer video.');
+      setError('Failed to analyze video. Please try with a clearer video with visible person.');
     } finally {
       setAnalyzing(false);
     }
@@ -291,10 +424,10 @@ export function Gait() {
               <Upload size={28} />
             </div>
 
-            <h3 style={{ marginBottom: '8px', fontWeight: 600 }}>Upload Video</h3>
+            <h3 style={{ marginBottom: '8px', fontWeight: 600 }}>Upload Video or Use Camera</h3>
 
             <p style={{ color: '#64748B', marginBottom: '16px' }}>
-              Drag and drop a video file or click to browse (MP4, WebM)
+              Drag and drop a video file, click to browse, or use your camera for live analysis (MP4, WebM)
             </p>
 
             <input
@@ -303,19 +436,50 @@ export function Gait() {
               accept="video/*"
               onChange={handleFileChange}
               style={{ display: 'none' }}
+              disabled={useCamera}
             />
 
-            <label
-              htmlFor="video-upload"
-              className="btn btn-primary"
-              style={{ cursor: 'pointer' }}
-            >
-              Choose File
-            </label>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <label
+                htmlFor="video-upload"
+                className="btn btn-primary"
+                style={{ cursor: useCamera ? 'not-allowed' : 'pointer', opacity: useCamera ? 0.5 : 1 }}
+              >
+                <Upload size={18} style={{ marginRight: '8px' }} />
+                Choose File
+              </label>
 
-            {fileName && (
+              {!cameraActive ? (
+                <button
+                  onClick={startCamera}
+                  disabled={!modelLoaded}
+                  className="btn btn-primary"
+                  style={{ backgroundColor: '#10B981' }}
+                >
+                  <Camera size={18} style={{ marginRight: '8px' }} />
+                  Start Camera
+                </button>
+              ) : (
+                <button
+                  onClick={stopCamera}
+                  className="btn btn-primary"
+                  style={{ backgroundColor: '#EF4444' }}
+                >
+                  <CameraOff size={18} style={{ marginRight: '8px' }} />
+                  Stop Camera
+                </button>
+              )}
+            </div>
+
+            {fileName && !useCamera && (
               <p style={{ marginTop: '16px', color: '#22C55E', fontWeight: 500 }}>
                 Selected: {fileName}
+              </p>
+            )}
+
+            {useCamera && (
+              <p style={{ marginTop: '16px', color: '#10B981', fontWeight: 500 }}>
+                📹 Live camera feed active - Click "Analyze Gait" to start analysis
               </p>
             )}
           </div>
@@ -328,10 +492,17 @@ export function Gait() {
           <h3 style={{ marginBottom: '16px', fontWeight: 600 }}>Video Preview</h3>
           <video
             ref={videoRef}
-            src={videoURL}
-            style={{ width: '100%', maxHeight: '400px', borderRadius: '12px', background: '#000' }}
+            src={useCamera ? undefined : (videoURL === 'camera' ? undefined : videoURL)}
+            autoPlay
             playsInline
             muted
+            style={{ 
+              width: '100%', 
+              maxHeight: '400px', 
+              borderRadius: '12px', 
+              background: '#000',
+              objectFit: 'cover'
+            }}
           />
           <canvas ref={canvasRef} style={{ display: 'none' }} />
         </div>

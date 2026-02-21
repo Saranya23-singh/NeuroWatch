@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Upload, Mic, TrendingUp, Activity, AlertCircle, CheckCircle, Loader2, Waveform } from "lucide-react";
+import { Upload, Mic, TrendingUp, Activity, AlertCircle, CheckCircle, Loader2, AudioLines } from "lucide-react";
 
 // Firebase URL
 const FIREBASE_URL = "https://neurowatch-b3b08-default-rtdb.firebaseio.com/watch_data";
@@ -435,7 +435,7 @@ export function VoiceAnalysis() {
               background: '#F8FAFC',
               borderRadius: '12px'
             }}>
-              <Waveform size={24} style={{ color: '#2563EB' }} />
+              <AudioLines size={24} style={{ color: '#2563EB' }} />
               <audio 
                 controls 
                 src={audioURL} 
@@ -546,7 +546,7 @@ export function VoiceAnalysis() {
                 <p style={{ fontSize: '1.5rem', fontWeight: 700, color: '#22C55E' }}>
                   {result.jitter.toFixed(4)}
                 </p>
-                <p style={{ color: '#64748B', fontSize: '12px' }}>Lower is better (<0.01)</p>
+                <p style={{ color: '#64748B', fontSize: '12px' }}>Lower is better {"<"}0.01)</p>
               </div>
 
               <div style={{ 
@@ -559,7 +559,7 @@ export function VoiceAnalysis() {
                 <p style={{ fontSize: '1.5rem', fontWeight: 700, color: '#22C55E' }}>
                   {result.shimmer.toFixed(4)}
                 </p>
-                <p style={{ color: '#64748B', fontSize: '12px' }}>Lower is better (<0.05)</p>
+                <p style={{ color: '#64748B', fontSize: '12px' }}>Lower is better {"<"}0.05)</p>
               </div>
             </div>
 

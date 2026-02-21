@@ -13,6 +13,10 @@ import { Appointments } from "./pages/Appointments";
 import { Support } from "./pages/Support";
 import { Profile } from "./pages/Profile";
 import { Suggestions } from "./pages/Suggestions";
+import { WalkHistory } from "./pages/WalkHistory";
+import { ParkinsonsGuide } from "./pages/ParkinsonsGuide";
+import { ExerciseVideos } from "./pages/ExerciseVideos";
+import { Medications } from "./pages/Medications";
 
 export const router = createBrowserRouter([
   {
@@ -32,6 +36,10 @@ export const router = createBrowserRouter([
       { path: 'support', Component: Support },
       { path: 'profile', Component: Profile },
       { path: 'suggestions', Component: Suggestions },
+      { path: 'walk-history', Component: WalkHistory },
+      { path: 'parkinsons-guide', Component: ParkinsonsGuide },
+      { path: 'exercises', Component: ExerciseVideos },
+      { path: 'medications', Component: Medications },
       { path: '*', Component: Login },
     ],
   },

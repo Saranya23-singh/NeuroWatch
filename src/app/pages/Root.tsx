@@ -9,7 +9,11 @@ import {
   Calendar, 
   LifeBuoy, 
   Lightbulb,
-  Activity
+  Activity,
+  Route,
+  Brain,
+  Dumbbell,
+  Pill
 } from "lucide-react";
 
 const navItems = [
@@ -18,7 +22,11 @@ const navItems = [
   { to: "voice", icon: Mic, label: "Voice Analysis" },
   { to: "smartwatch", icon: Watch, label: "Smartwatch" },
   { to: "lifestyle", icon: Activity, label: "Lifestyle" },
-  { to: "history", icon: History, label: "History" },
+  { to: "walk-history", icon: Route, label: "Walk Tracking" },
+  { to: "exercises", icon: Dumbbell, label: "Exercises" },
+  { to: "medications", icon: Pill, label: "Medications" },
+  { to: "parkinsons-guide", icon: Brain, label: "Parkinson's Guide" },
+  { to: "history", icon: History, label: "Health Report" },
   { to: "profile", icon: User, label: "Profile" },
   { to: "appointments", icon: Calendar, label: "Appointments" },
   { to: "support", icon: LifeBuoy, label: "Support" },
