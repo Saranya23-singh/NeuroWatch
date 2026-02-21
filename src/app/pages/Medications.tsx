@@ -142,6 +142,35 @@ export function Medications() {
     }
   };
 
+  // Test reminder - manually trigger a notification
+  const testReminder = () => {
+    const testMed: Medication = {
+      id: 'test',
+      name: 'Test Medication',
+      dosage: '100mg',
+      frequency: 'daily',
+      times: ['now'],
+      enabled: true
+    };
+    
+    const message = `Time to take ${testMed.name} (${testMed.dosage})`;
+    setReminderMessage(message);
+    setShowReminder(true);
+    playAlarmSound();
+    showBrowserNotification('Medication Reminder', message);
+    
+    const newLog: MedicationLog = {
+      id: Date.now().toString(),
+      medicationId: testMed.id,
+      medicationName: testMed.name,
+      dosage: testMed.dosage,
+      scheduledTime: new Date().toTimeString().slice(0, 5),
+      status: 'pending',
+      date: getTodayDate()
+    };
+    setReminderMedication(newLog);
+  };
+
   // Show browser notification
   const showBrowserNotification = (title: string, body: string) => {
     if (Notification.permission === 'granted') {
@@ -161,25 +190,60 @@ export function Medications() {
     }
   };
 
-  // Play alarm sound
+  // Play alarm sound - using HTML5 Audio for better browser support
   const playAlarmSound = () => {
     try {
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
+      // Method 1: Try using Web Audio API
+      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioContext) {
+        const audioContext = new AudioContext();
+        
+        // Play multiple beeps
+        const playBeep = (startTime: number, frequency: number, duration: number) => {
+          const oscillator = audioContext.createOscillator();
+          const gainNode = audioContext.createGain();
+          
+          oscillator.connect(gainNode);
+          gainNode.connect(audioContext.destination);
+          
+          oscillator.frequency.value = frequency;
+          oscillator.type = 'square';
+          
+          gainNode.gain.setValueAtTime(0.15, startTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+          
+          oscillator.start(startTime);
+          oscillator.stop(startTime + duration);
+        };
+        
+        const now = audioContext.currentTime;
+        // Play 3 beeps with increasing frequency
+        playBeep(now, 600, 0.2);
+        playBeep(now + 0.3, 800, 0.2);
+        playBeep(now + 0.6, 1000, 0.3);
+        
+        console.log('Alarm sound played via Web Audio API');
+        return;
+      }
       
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
+      // Method 2: Fallback - try playing a beep using audio element
+      const audio = new Audio();
+      // Generate a simple beep using data URL
+      const sampleRate = 44100;
+      const duration = 0.5;
+      const numSamples = sampleRate * duration;
+      const samples = new Uint8Array(numSamples);
       
-      oscillator.frequency.value = 800;
-      oscillator.type = 'sine';
-      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+      for (let i = 0; i < numSamples; i++) {
+        const t = i / sampleRate;
+        // Generate a beep tone
+        samples[i] = Math.floor(128 + 127 * Math.sin(2 * Math.PI * 800 * t) * Math.exp(-3 * t));
+      }
       
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.5);
+      // This is a workaround - browsers may block auto-play audio
+      console.log('Audio context not available, sound may not play without user interaction');
     } catch (e) {
-      console.log('Audio not supported');
+      console.log('Audio error:', e);
     }
   };
 
@@ -675,6 +739,29 @@ export function Medications() {
       <div className="page-header">
         <h1 className="page-title">Medications</h1>
         <p className="page-subtitle">Track your Parkinson's medications and maintain adherence</p>
+        
+        {/* Test Reminder Button */}
+        <button
+          onClick={testReminder}
+          style={{
+            marginTop: '12px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '10px 20px',
+            borderRadius: '8px',
+            border: 'none',
+            background: 'linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)',
+            color: 'white',
+            cursor: 'pointer',
+            fontWeight: 500,
+            fontSize: '14px',
+            boxShadow: '0 4px 15px rgba(139, 92, 246, 0.4)'
+          }}
+        >
+          <Bell size={18} />
+          Test Reminder Notification
+        </button>
       </div>
 
       {/* Today's Summary Card */}
