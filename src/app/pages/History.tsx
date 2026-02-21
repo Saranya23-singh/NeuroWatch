@@ -13,15 +13,33 @@ import {
   TrendingUp,
   AlertTriangle,
   CheckCircle,
-  Printer
+  Printer,
+  Upload,
+  X,
+  File,
+  Eye,
+  Trash2,
+  Plus
 } from "lucide-react";
 import { jsPDF } from "jspdf";
+import { storage, firestore } from "../../firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { collection, addDoc, getDocs, query, where, deleteDoc, doc } from "firebase/firestore";
 
 const FIREBASE_WATCH_URL =
   "https://neurowatch-b3b08-default-rtdb.firebaseio.com/watch_data";
 
 const FIREBASE_LIFESTYLE_URL =
   "https://neurowatch-b3b08-default-rtdb.firebaseio.com/lifestyle";
+
+// Report categories
+const REPORT_CATEGORIES = [
+  { id: 'blood_sugar', label: 'Blood Sugar', color: '#EF4444' },
+  { id: 'blood_pressure', label: 'Blood Pressure', color: '#8B5CF6' },
+  { id: 'lab_tests', label: 'Lab Tests', color: '#3B82F6' },
+  { id: 'prescription', label: 'Prescription', color: '#22C55E' },
+  { id: 'other', label: 'Other', color: '#64748B' },
+];
 
 interface MedicalRecord {
   date: string;
@@ -37,6 +55,16 @@ interface MedicalRecord {
   snack?: string;
   dinner?: string;
   riskLevel?: string;
+}
+
+interface MedicalReport {
+  id: string;
+  name: string;
+  category: string;
+  uploadDate: string;
+  fileUrl: string;
+  fileType: string;
+  fileSize: number;
 }
 
 interface ReportData {
@@ -75,6 +103,14 @@ export function History() {
   const [expandedRecords, setExpandedRecords] = useState<Set<string>>(new Set());
   const [reportData, setReportData] = useState<ReportData | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  
+  // Medical Reports Upload State
+  const [reports, setReports] = useState<MedicalReport[]>([]);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState('other');
+  const [reportName, setReportName] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     const fetchAllData = async () => {
@@ -159,8 +195,160 @@ export function History() {
       }
     };
 
-    fetchAllData();
+fetchAllData();
   }, []);
+
+  // Fetch medical reports from Firestore
+  useEffect(() => {
+    const fetchReports = async () => {
+      const username = getUsername();
+      if (!username || !firestore) return;
+      
+      try {
+        const q = query(
+          collection(firestore, 'medical_reports'),
+          where('username', '==', username)
+        );
+        const querySnapshot = await getDocs(q);
+        const fetchedReports: MedicalReport[] = [];
+        querySnapshot.forEach((doc) => {
+          fetchedReports.push({ id: doc.id, ...doc.data() } as MedicalReport);
+        });
+        // Sort by upload date descending
+        fetchedReports.sort((a, b) => new Date(b.uploadDate).getTime() - new Date(a.uploadDate).getTime());
+        setReports(fetchedReports);
+      } catch (error) {
+        console.error('Error fetching reports:', error);
+      }
+    };
+    
+    fetchReports();
+  }, []);
+
+  // Handle file selection
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Validate file type
+      const validTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+      if (!validTypes.includes(file.type)) {
+        alert('Please select a PDF or image file (JPEG, PNG, GIF, WebP)');
+        return;
+      }
+      // Validate file size (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        alert('File size must be less than 10MB');
+        return;
+      }
+      setSelectedFile(file);
+      if (!reportName) {
+        setReportName(file.name.replace(/\.[^/.]+$/, ''));
+      }
+    }
+  };
+
+  // Upload report to Firebase Storage and Firestore
+  const handleUploadReport = async () => {
+    if (!selectedFile || !reportName || !storage || !firestore) {
+      alert('Please select a file and enter a name');
+      return;
+    }
+    
+    const username = getUsername();
+    if (!username) {
+      alert('Please log in to upload reports');
+      return;
+    }
+    
+    setIsUploading(true);
+    
+    try {
+      // Upload file to Firebase Storage
+      const storageRef = ref(storage, `medical_reports/${username}/${Date.now()}_${selectedFile.name}`);
+      await uploadBytes(storageRef, selectedFile);
+      const downloadURL = await getDownloadURL(storageRef);
+      
+      // Save metadata to Firestore
+      const reportData = {
+        username,
+        name: reportName,
+        category: selectedCategory,
+        uploadDate: new Date().toISOString(),
+        fileUrl: downloadURL,
+        fileType: selectedFile.type,
+        fileSize: selectedFile.size,
+      };
+      
+      const docRef = await addDoc(collection(firestore, 'medical_reports'), reportData);
+      
+      // Update local state
+      const newReport: MedicalReport = {
+        id: docRef.id,
+        ...reportData
+      };
+      setReports([newReport, ...reports]);
+      
+      // Reset form
+      setShowUploadModal(false);
+      setSelectedFile(null);
+      setReportName('');
+      setSelectedCategory('other');
+      alert('Report uploaded successfully!');
+      
+    } catch (error) {
+      console.error('Error uploading report:', error);
+      alert('Failed to upload report. Please try again.');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // Delete report
+  const handleDeleteReport = async (reportId: string) => {
+    if (!firestore) return;
+    
+    if (!confirm('Are you sure you want to delete this report?')) return;
+    
+    try {
+      await deleteDoc(doc(firestore, 'medical_reports', reportId));
+      setReports(reports.filter(r => r.id !== reportId));
+      alert('Report deleted successfully!');
+    } catch (error) {
+      console.error('Error deleting report:', error);
+      alert('Failed to delete report. Please try again.');
+    }
+  };
+
+  // Format file size
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  };
+
+  // Format date
+  const formatUploadDate = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  // Get category color
+  const getCategoryColor = (categoryId: string) => {
+    const category = REPORT_CATEGORIES.find(c => c.id === categoryId);
+    return category?.color || '#64748B';
+  };
+
+  // Get category label
+  const getCategoryLabel = (categoryId: string) => {
+    const category = REPORT_CATEGORIES.find(c => c.id === categoryId);
+    return category?.label || 'Other';
+  };
 
   const generateSampleData = (): MedicalRecord[] => {
     const today = new Date().toISOString().split("T")[0];
@@ -381,31 +569,195 @@ export function History() {
   };
 
   return (
-    <div className="page-container">
-      <div className="flex justify-between items-start" style={{ marginBottom: '32px' }}>
+<div className="page-container">
+      {/* Upload Medical Reports Modal */}
+      {showUploadModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.6)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          padding: '20px'
+        }}
+        onClick={() => setShowUploadModal(false)}
+        >
+          <div 
+            style={{
+              background: 'white',
+              borderRadius: '16px',
+              padding: '24px',
+              maxWidth: '500px',
+              width: '100%',
+              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <h2 style={{ fontSize: '20px', fontWeight: 600, color: '#0F172A' }}>Upload Medical Report</h2>
+              <button 
+                onClick={() => setShowUploadModal(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
+              >
+                <X size={24} color="#64748B" />
+              </button>
+            </div>
+            
+            {/* File Input */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontWeight: 500, marginBottom: '8px', color: '#0F172A' }}>
+                Select File *
+              </label>
+              <div style={{
+                border: '2px dashed #CBD5E1',
+                borderRadius: '12px',
+                padding: '32px',
+                textAlign: 'center',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                background: selectedFile ? '#F0F9FF' : 'white'
+              }}
+              onClick={() => document.getElementById('fileInput')?.click()}
+              >
+                <input
+                  id="fileInput"
+                  type="file"
+                  accept=".pdf,image/*"
+                  onChange={handleFileSelect}
+                  style={{ display: 'none' }}
+                />
+                {selectedFile ? (
+                  <div>
+                    <File size={40} color="#2563EB" style={{ marginBottom: '8px' }} />
+                    <p style={{ fontWeight: 500, color: '#0F172A' }}>{selectedFile.name}</p>
+                    <p style={{ fontSize: '12px', color: '#64748B' }}>{formatFileSize(selectedFile.size)}</p>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); setSelectedFile(null); }}
+                      style={{ marginTop: '8px', background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: '12px' }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    <Upload size={40} color="#94A3B8" style={{ marginBottom: '8px' }} />
+                    <p style={{ color: '#64748B' }}>Click to select PDF or image</p>
+                    <p style={{ fontSize: '12px', color: '#94A3B8' }}>Max file size: 10MB</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            {/* Report Name */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontWeight: 500, marginBottom: '8px', color: '#0F172A' }}>
+                Report Name *
+              </label>
+              <input
+                type="text"
+                value={reportName}
+                onChange={(e) => setReportName(e.target.value)}
+                placeholder="e.g., Blood Test Results"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '1px solid #E2E8F0',
+                  borderRadius: '8px',
+                  fontSize: '14px'
+                }}
+              />
+            </div>
+            
+            {/* Category Selection */}
+            <div style={{ marginBottom: '24px' }}>
+              <label style={{ display: 'block', fontWeight: 500, marginBottom: '8px', color: '#0F172A' }}>
+                Category *
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                {REPORT_CATEGORIES.map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => setSelectedCategory(cat.id)}
+                    style={{
+                      padding: '12px',
+                      border: selectedCategory === cat.id ? `2px solid ${cat.color}` : '2px solid #E2E8F0',
+                      borderRadius: '8px',
+                      background: selectedCategory === cat.id ? `${cat.color}15` : 'white',
+                      cursor: 'pointer',
+                      fontWeight: 500,
+                      fontSize: '13px',
+                      color: selectedCategory === cat.id ? cat.color : '#64748B',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            {/* Upload Button */}
+            <button
+              onClick={handleUploadReport}
+              disabled={!selectedFile || !reportName || isUploading}
+              style={{
+                width: '100%',
+                padding: '14px',
+                border: 'none',
+                borderRadius: '8px',
+                background: selectedFile && reportName && !isUploading ? '#2563EB' : '#94A3B8',
+                color: 'white',
+                fontWeight: 600,
+                cursor: selectedFile && reportName && !isUploading ? 'pointer' : 'not-allowed',
+                transition: 'all 0.2s'
+              }}
+            >
+              {isUploading ? 'Uploading...' : 'Upload Report'}
+            </button>
+          </div>
+        </div>
+      )}
+
+<div className="flex justify-between items-start" style={{ marginBottom: '32px' }}>
         <div>
           <h1 className="page-title">Health Report</h1>
           <p className="page-subtitle">View your health metrics, trends, and generate reports</p>
         </div>
 
-        <button
-          onClick={generatePDF}
-          disabled={isGenerating}
-          className="btn btn-primary"
-          style={{ gap: '8px' }}
-        >
-          {isGenerating ? (
-            <>
-              <span className="animate-spin">⟳</span>
-              Generating...
-            </>
-          ) : (
-            <>
-              <Download size={18} />
-              Download Report
-            </>
-          )}
-        </button>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button
+            onClick={() => setShowUploadModal(true)}
+            className="btn btn-primary"
+            style={{ gap: '8px', background: '#8B5CF6' }}
+          >
+            <Upload size={18} />
+            Upload Report
+          </button>
+
+          <button
+            onClick={generatePDF}
+            disabled={isGenerating}
+            className="btn btn-primary"
+            style={{ gap: '8px' }}
+          >
+            {isGenerating ? (
+              <>
+                <span className="animate-spin">⟳</span>
+                Generating...
+              </>
+            ) : (
+              <>
+                <Download size={18} />
+                Download Report
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Report Summary Cards */}
@@ -628,6 +980,156 @@ export function History() {
             );
           })}
         </div>
+      </div>
+
+      {/* Uploaded Medical Reports Section */}
+      <div className="card" style={{ marginTop: '24px' }}>
+        <div className="chart-header">
+          <FileText size={22} style={{ color: '#8B5CF6' }} />
+          <h2 className="chart-title">Uploaded Medical Reports</h2>
+        </div>
+
+        {reports.length === 0 ? (
+          <div style={{ 
+            padding: '40px', 
+            textAlign: 'center',
+            background: '#F8FAFC',
+            borderRadius: '12px',
+            marginTop: '16px'
+          }}>
+            <FileText size={48} color="#94A3B8" style={{ marginBottom: '12px' }} />
+            <h3 style={{ color: '#64748B', marginBottom: '8px' }}>No medical reports uploaded yet</h3>
+            <p style={{ color: '#94A3B8', fontSize: '14px', marginBottom: '16px' }}>
+              Click "Upload Report" to add your medical documents
+            </p>
+            <button
+              onClick={() => setShowUploadModal(true)}
+              className="btn btn-primary"
+              style={{ gap: '8px', background: '#8B5CF6' }}
+            >
+              <Upload size={18} />
+              Upload Report
+            </button>
+          </div>
+        ) : (
+          <div style={{ marginTop: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+              {reports.map((report) => (
+                <div 
+                  key={report.id} 
+                  style={{ 
+                    padding: '20px', 
+                    background: '#F8FAFC', 
+                    borderRadius: '12px',
+                    border: '1px solid #E2E8F0'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div style={{ 
+                        width: '40px', 
+                        height: '40px', 
+                        background: `${getCategoryColor(report.category)}20`,
+                        borderRadius: '10px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}>
+                        <File size={20} style={{ color: getCategoryColor(report.category) }} />
+                      </div>
+                      <div>
+                        <h4 style={{ fontWeight: 600, color: '#0F172A', marginBottom: '4px' }}>
+                          {report.name}
+                        </h4>
+                        <span style={{
+                          padding: '2px 8px',
+                          borderRadius: '10px',
+                          fontSize: '11px',
+                          fontWeight: 500,
+                          background: `${getCategoryColor(report.category)}20`,
+                          color: getCategoryColor(report.category)
+                        }}>
+                          {getCategoryLabel(report.category)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div style={{ marginBottom: '16px' }}>
+                    <p style={{ color: '#64748B', fontSize: '12px' }}>
+                      Uploaded: {formatUploadDate(report.uploadDate)}
+                    </p>
+                    <p style={{ color: '#64748B', fontSize: '12px' }}>
+                      Size: {formatFileSize(report.fileSize)}
+                    </p>
+                  </div>
+                  
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      onClick={() => window.open(report.fileUrl, '_blank')}
+                      style={{
+                        flex: 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                        padding: '10px',
+                        border: 'none',
+                        borderRadius: '8px',
+                        background: '#2563EB',
+                        color: 'white',
+                        cursor: 'pointer',
+                        fontWeight: 500,
+                        fontSize: '13px'
+                      }}
+                    >
+                      <Eye size={16} />
+                      View
+                    </button>
+                    <button
+                      onClick={() => handleDeleteReport(report.id)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: '10px',
+                        border: 'none',
+                        borderRadius: '8px',
+                        background: '#FEE2E2',
+                        color: '#DC2626',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <button
+              onClick={() => setShowUploadModal(true)}
+              style={{
+                marginTop: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                width: '100%',
+                padding: '16px',
+                border: '2px dashed #CBD5E1',
+                borderRadius: '12px',
+                background: 'transparent',
+                color: '#64748B',
+                cursor: 'pointer',
+                fontWeight: 500
+              }}
+            >
+              <Plus size={20} />
+              Add Another Report
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

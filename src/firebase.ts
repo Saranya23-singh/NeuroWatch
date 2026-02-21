@@ -1,5 +1,7 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getDatabase } from "firebase/database";
+import { getStorage } from "firebase/storage";
+import { getFirestore } from "firebase/firestore";
 
 // Check if Firebase is properly configured
 const isFirebaseConfigured = () => {
@@ -23,19 +25,27 @@ const firebaseConfig = {
 // Initialize Firebase only if properly configured
 let app;
 let database;
+let storage;
+let firestore;
 
 try {
   if (isFirebaseConfigured()) {
     app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
     database = getDatabase(app);
+    storage = getStorage(app);
+    firestore = getFirestore(app);
     console.log("Firebase initialized successfully");
   } else {
     console.warn("Firebase is not properly configured. Using mock data mode.");
     database = null;
+    storage = null;
+    firestore = null;
   }
 } catch (error) {
   console.error("Firebase initialization failed:", error);
   database = null;
+  storage = null;
+  firestore = null;
 }
 
-export { database };
+export { database, storage, firestore };
